@@ -137,6 +137,7 @@
       })
     (ok true)))
 
+
 ;; Set Oracle Address
 (define-public (set-oracle-address (new-address principal))
   (begin

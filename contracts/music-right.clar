@@ -20,6 +20,7 @@
 (define-constant ERR_TRANSFER_FAILED (err u104))
 
 
+
 ;; Define fungible token for royalty payments
 (define-fungible-token royalty-token)
 

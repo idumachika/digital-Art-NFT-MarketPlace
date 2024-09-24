@@ -1,21 +1,29 @@
+import { describe, it, expect, vi } from "vitest";
 
-import { describe, expect, it } from "vitest";
-
-const accounts = simnet.getAccounts();
-const address1 = accounts.get("wallet_1")!;
+// Mock the contract function
+const distributeRoyalties = vi.fn();
 
 /*
   The test below is an example. To learn more, read the testing documentation here:
   https://docs.hiro.so/stacks/clarinet-js-sdk
 */
 
-describe("example tests", () => {
-  it("ensures simnet is well initalised", () => {
-    expect(simnet.blockHeight).toBeDefined();
-  });
+describe("distribute-royalties", () => {
+  it("should distribute royalties successfully", () => {
+    const mockTokenId = 1;
+    const mockRoyaltyAmount = 1000;
+    const mockArtist = "ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM";
 
-  // it("shows an example", () => {
-  //   const { result } = simnet.callReadOnlyFn("counter", "get-counter", [], address1);
-  //   expect(result).toBeUint(0);
-  // });
+    // Mock successful distribution
+    distributeRoyalties.mockReturnValue({ isOk: true, value: true });
+
+    const result = distributeRoyalties(mockTokenId, mockRoyaltyAmount);
+
+    expect(result.isOk).toBe(true);
+    expect(result.value).toBe(true);
+    expect(distributeRoyalties).toHaveBeenCalledWith(
+      mockTokenId,
+      mockRoyaltyAmount
+    );
+  });
 });

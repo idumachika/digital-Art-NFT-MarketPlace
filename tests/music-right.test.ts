@@ -41,5 +41,21 @@ describe("distribute-royalties", () => {
       expect(result.isOk).toBe(false);
       expect(result.value).toBe("ERR_NOT_AUTHORIZED");
     });
+
+    it("should fail if NFT does not exist", () => {
+      const mockTokenId = 999; // Non-existent token ID
+      const mockRoyaltyAmount = 1000;
+
+      // Mock failure due to non-existent NFT
+      distributeRoyalties.mockReturnValue({
+        isOk: false,
+        value: "ERR_NFT_NOT_FOUND",
+      });
+
+      const result = distributeRoyalties(mockTokenId, mockRoyaltyAmount);
+
+      expect(result.isOk).toBe(false);
+      expect(result.value).toBe("ERR_NFT_NOT_FOUND");
+    });
   });
 });

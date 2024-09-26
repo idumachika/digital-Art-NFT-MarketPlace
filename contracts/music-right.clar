@@ -14,6 +14,8 @@
 (define-constant ERR_TRANSFER_FAILED (err u106))
 (define-constant ERR_INVALID_AMOUNT (err u107))
 
+
+
 ;; Define fungible token for royalty payments
 (define-fungible-token royalty-token)
 

@@ -1,13 +1,7 @@
-
 ;; title: music-right
-;; version:
-;; summary:
-;; description:
-
-;; Music Rights NFT
-
-(define-data-var oracle-address principal tx-sender)
-
+;; version: 2.2
+;; summary: Music Rights NFT with consistent token structure
+;; description: A smart contract for managing music rights as NFTs with marketplace features and consistent token structure
 
 ;; Constants
 (define-constant CONTRACT_OWNER tx-sender)
@@ -15,19 +9,19 @@
 (define-constant ERR_NFT_EXISTS (err u101))
 (define-constant ERR_NFT_NOT_FOUND (err u102))
 (define-constant ERR_INSUFFICIENT_BALANCE (err u103))
-(define-constant ERR_MINT_FAILED (err u102))
-(define-constant ERR_NO_ROYALTIES_TO_CLAIM (err u103))
-(define-constant ERR_TRANSFER_FAILED (err u104))
-
-
+(define-constant ERR_MINT_FAILED (err u104))
+(define-constant ERR_NO_ROYALTIES_TO_CLAIM (err u105))
+(define-constant ERR_TRANSFER_FAILED (err u106))
+(define-constant ERR_INVALID_AMOUNT (err u107))
 
 ;; Define fungible token for royalty payments
 (define-fungible-token royalty-token)
 
 ;; Data Variables
 (define-data-var last-token-id uint u0)
+(define-data-var oracle-address principal tx-sender)
 
-;; Data Maps
+;; Updated Data Maps
 (define-map tokens 
   { token-id: uint } 
   { 
@@ -36,20 +30,25 @@
     song-title: (string-ascii 256),
     royalty-percentage: uint,
     total-shares: uint,
-    uri: (string-ascii 256)
+    uri: (string-ascii 256),
+    is-for-sale: bool,
+    sale-price: uint
   })
-;; Define the streaming-data map
+
 (define-map streaming-data 
   { token-id: uint } 
   { 
     total-streams: uint,
     last-updated: uint
-  }
-)
+  })
 
 (define-map token-balances
   { token-id: uint, owner: principal }
   { balance: uint })
+
+(define-map revenue-per-stream 
+  { token-id: uint }
+  { amount: uint })
 
 ;; NFT Mint Function
 (define-public (mint-music-rights (artist principal) (song-title (string-ascii 256)) (royalty-percentage uint) (total-shares uint) (uri (string-ascii 256)))
@@ -65,7 +64,9 @@
         song-title: song-title,
         royalty-percentage: royalty-percentage,
         total-shares: total-shares,
-        uri: uri
+        uri: uri,
+        is-for-sale: false,
+        sale-price: u0
       })
     (map-set token-balances
       {token-id: token-id, owner: artist}
@@ -77,7 +78,8 @@
 (define-public (transfer-shares (token-id uint) (amount uint) (sender principal) (recipient principal))
   (let
     ((sender-balance (default-to {balance: u0} (map-get? token-balances {token-id: token-id, owner: sender})))
-     (recipient-balance (default-to {balance: u0} (map-get? token-balances {token-id: token-id, owner: recipient}))))
+     (recipient-balance (default-to {balance: u0} (map-get? token-balances {token-id: token-id, owner: recipient})))
+     (token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
     (asserts! (>= (get balance sender-balance) amount) ERR_INSUFFICIENT_BALANCE)
     (map-set token-balances
       {token-id: token-id, owner: sender}
@@ -85,17 +87,20 @@
     (map-set token-balances
       {token-id: token-id, owner: recipient}
       {balance: (+ (get balance recipient-balance) amount)})
+    (if (is-eq sender (get owner token))
+      (map-set tokens
+        {token-id: token-id}
+        (merge token {owner: recipient}))
+      true)
     (ok true)))
 
 ;; Distribute Royalties Function
 (define-public (distribute-royalties (token-id uint) (royalty-amount uint))
   (let
-    ((token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND))
-     (total-shares (get total-shares token)))
+    ((token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
     (asserts! (is-eq tx-sender (get artist token)) ERR_NOT_AUTHORIZED)
     (unwrap! (ft-mint? royalty-token royalty-amount tx-sender) ERR_MINT_FAILED)
     (ok true)))
-
 
 ;; Claim Royalties Function
 (define-public (claim-royalties (token-id uint))
@@ -108,38 +113,71 @@
     (asserts! (> share-amount u0) ERR_NO_ROYALTIES_TO_CLAIM)
     (match (ft-transfer? royalty-token share-amount (as-contract tx-sender) tx-sender)
       success (ok share-amount)
-      error (err u1)))) ;; Use a uint error code instead of ERR_TRANSFER_FAILED
+      error (err u1))))
 
+;; List for Sale Function
+(define-public (list-for-sale (token-id uint) (price uint))
+  (let ((token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
+    (asserts! (is-eq tx-sender (get owner token)) ERR_NOT_AUTHORIZED)
+    (asserts! (> price u0) ERR_INVALID_AMOUNT)
+    (ok (map-set tokens
+      {token-id: token-id}
+      (merge token {is-for-sale: true, sale-price: price})))))
 
-;; Get Token Info
-(define-read-only (get-token-info (token-id uint))
-  (ok (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
+;; Cancel Sale Listing Function
+(define-public (cancel-sale-listing (token-id uint))
+  (let ((token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
+    (asserts! (is-eq tx-sender (get owner token)) ERR_NOT_AUTHORIZED)
+    (ok (map-set tokens
+      {token-id: token-id}
+      (merge token {is-for-sale: false, sale-price: u0})))))
 
-;; Get Share Balance
-(define-read-only (get-share-balance (token-id uint) (owner principal))
-  (ok (get balance (default-to {balance: u0} (map-get? token-balances {token-id: token-id, owner: owner})))))
+;; Buy NFT Function
+(define-public (buy-nft (token-id uint))
+  (let ((token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
+    (asserts! (get is-for-sale token) ERR_NOT_AUTHORIZED)
+    (asserts! (is-eq (stx-transfer? (get sale-price token) tx-sender (get owner token)) (ok true)) ERR_TRANSFER_FAILED)
+    (ok (map-set tokens
+      {token-id: token-id}
+      (merge token {owner: tx-sender, is-for-sale: false, sale-price: u0})))))
 
-;; Get Total Royalties
-(define-read-only (get-total-royalties)
-  (ok (ft-get-balance royalty-token (as-contract tx-sender))))
+;; Set Revenue per Stream Function
+(define-public (set-revenue-per-stream (token-id uint) (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get oracle-address)) ERR_NOT_AUTHORIZED)
+    (ok (map-set revenue-per-stream {token-id: token-id} {amount: amount}))))
 
-;; Function to update streaming data
+;; Update Streaming Data Function
 (define-public (update-streaming-data (token-id uint) (new-streams uint))
   (let ((current-data (default-to 
                         { total-streams: u0, last-updated: u0 } 
                         (map-get? streaming-data {token-id: token-id}))))
-    (map-set streaming-data 
+    (ok (map-set streaming-data 
       {token-id: token-id} 
       { 
         total-streams: (+ (get total-streams current-data) new-streams),
         last-updated: block-height
-      })
-    (ok true)))
+      }))))
 
-
-;; Set Oracle Address
+;; Set Oracle Address Function
 (define-public (set-oracle-address (new-address principal))
   (begin
     (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
-    (var-set oracle-address new-address)
-    (ok true)))
+    (ok (var-set oracle-address new-address))))
+
+;; Read-only Functions
+(define-read-only (get-token-info (token-id uint))
+  (ok (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
+
+(define-read-only (get-share-balance (token-id uint) (owner principal))
+  (ok (get balance (default-to {balance: u0} (map-get? token-balances {token-id: token-id, owner: owner})))))
+
+(define-read-only (get-total-royalties)
+  (ok (ft-get-balance royalty-token (as-contract tx-sender))))
+
+(define-read-only (get-nft-sale-status (token-id uint))
+  (let ((token (unwrap! (map-get? tokens {token-id: token-id}) ERR_NFT_NOT_FOUND)))
+    (ok {is-for-sale: (get is-for-sale token), sale-price: (get sale-price token)})))
+
+(define-read-only (get-revenue-per-stream (token-id uint))
+  (ok (unwrap! (map-get? revenue-per-stream {token-id: token-id}) ERR_NFT_NOT_FOUND)))
